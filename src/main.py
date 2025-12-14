@@ -1,10 +1,12 @@
 import pygame
 import sys
 import os
-import random
+import math
+from constants import ASSETS_DIR
+from board import Board
 from constants import *
 from board import Board, ASSETS_DIR
-from ai import ai_best_move   # your ai function (fast depth1 or minimax with safeguards)
+from ai import ai_best_move   # your AI function
 
 pygame.init()
 WIN = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -12,6 +14,7 @@ pygame.display.set_caption("6x5 Minichess")
 
 FONT_BIG = pygame.font.SysFont(None, 40)
 FONT_MD = pygame.font.SysFont(None, 24)
+
 
 def get_square_under_mouse():
     x, y = pygame.mouse.get_pos()
@@ -21,13 +24,15 @@ def get_square_under_mouse():
         return row, col
     return None, None
 
+
 def draw_button(win, rect, text, font, hover_color, default_color):
     mx, my = pygame.mouse.get_pos()
     color = hover_color if rect.collidepoint(mx, my) else default_color
     pygame.draw.rect(win, color, rect, border_radius=10)
-    txt = font.render(text, True, (255,255,255))
+    txt = font.render(text, True, (255, 255, 255))
     txt_rect = txt.get_rect(center=rect.center)
     win.blit(txt, txt_rect)
+
 
 def main_menu():
     button_w, button_h = 260, 80
@@ -38,43 +43,43 @@ def main_menu():
         WIN.fill((28, 30, 34))
 
         # Title
-        title = FONT_BIG.render("Minichess 6×5", True, (240,240,240))
+        title = FONT_BIG.render("Minichess 6×5", True, (240, 240, 240))
         WIN.blit(title, (WIDTH//2 - title.get_width()//2, 60))
 
-        # Small info
-        info = FONT_MD.render("Play vs Computer. Press Start to play.", True, (200,200,200))
+        # Info
+        info = FONT_MD.render("Play vs Computer. Press Start to play.", True, (200, 200, 200))
         WIN.blit(info, (WIDTH//2 - info.get_width()//2, 150))
 
-        draw_button(WIN, start_rect, "Start Game", FONT_MD, (0,180,0), (0,140,0))
-        draw_button(WIN, quit_rect, "Quit", FONT_MD, (180,0,0), (140,0,0))
+        draw_button(WIN, start_rect, "Start Game", FONT_MD, (0, 180, 0), (0, 140, 0))
+        draw_button(WIN, quit_rect, "Quit", FONT_MD, (180, 0, 0), (140, 0, 0))
 
         pygame.display.update()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                pygame.quit()
+                sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = pygame.mouse.get_pos()
                 if start_rect.collidepoint(mx, my):
                     game_loop()
                     return
                 if quit_rect.collidepoint(mx, my):
-                    pygame.quit(); sys.exit()
+                    pygame.quit()
+                    sys.exit()
 
-# promotion helper
+
 def promote_piece_image(piece):
+    """Promotes a pawn to a queen"""
     img_name = 'white_queen.png' if piece.color == WHITE else 'black_queen.png'
     path = os.path.join(ASSETS_DIR, img_name)
     piece.type = 'queen'
     piece.image = pygame.image.load(path).convert_alpha()
     piece.image = pygame.transform.smoothscale(piece.image, (SQUARE_SIZE, SQUARE_SIZE))
 
-# animate a single move: draw intermediate frames of piece sliding from src to dst
+
 def animate_move(board_obj, moving_piece, src, dst, duration_ms=180):
-    """
-    src, dst = (row,col). This function will render incremental frames showing the piece sliding.
-    Blocks until animation done (short), then returns.
-    """
+    """Animate piece sliding from src to dst"""
     clock = pygame.time.Clock()
     start_x = src[1] * SQUARE_SIZE
     start_y = src[0] * SQUARE_SIZE
@@ -85,112 +90,117 @@ def animate_move(board_obj, moving_piece, src, dst, duration_ms=180):
         dt = clock.tick(60)
         elapsed += dt
         t = min(1.0, elapsed / duration_ms)
-        # ease-in-out
         t_eased = -0.5 * (math.cos(math.pi * t) - 1)
         cur_x = start_x + (end_x - start_x) * t_eased
         cur_y = start_y + (end_y - start_y) * t_eased
 
-        # draw board and pieces, but don't draw the moving_piece in its board position (so it doesn't duplicate)
-        WIN.fill((0,0,0))
-        # draw board without the moving piece (temporarily remove)
-        # create temp copy to avoid mutating
-        temp = board_obj.board
-        # draw board (board.draw draws all current pieces in their stored positions)
-        board_obj.draw(WIN, highlight=None, highlight_moves=None)
-        # draw moving piece at cur_x, cur_y
+        WIN.fill((0, 0, 0))
+        board_obj.draw(WIN)
         WIN.blit(moving_piece.image, (cur_x, cur_y))
-        # draw turn text small
         pygame.display.update()
 
-import math
 
 def game_loop():
     board_obj = Board()
-    board = board_obj.board
     selected = None
     valid_moves = []
     human_color = WHITE
     ai_color = BLACK
     turn = WHITE
     clock = pygame.time.Clock()
+    game_over = False
+    MOVE_SOUND_PATH = os.path.join(ASSETS_DIR, "click.wav")
+    move_sound = pygame.mixer.Sound(MOVE_SOUND_PATH)
 
     while True:
         clock.tick(60)
+        moved_piece = None  # <-- reset every frame
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                pygame.quit()
+                sys.exit()
 
-            # Human click (only on human turn)
-            if event.type == pygame.MOUSEBUTTONDOWN and turn == human_color:
+            # Human move
+            if not game_over and event.type == pygame.MOUSEBUTTONDOWN and turn == human_color:
                 row, col = get_square_under_mouse()
                 if row is None:
                     continue
-                clicked = board[row][col]
+                clicked = board_obj.board[row][col]
 
-                # select piece
                 if clicked and clicked.color == human_color:
                     selected = clicked
-                    valid_moves = selected.get_valid_moves(board)
+                    valid_moves = selected.get_valid_moves(board_obj.board)
 
-                # move
                 elif selected and (row, col) in valid_moves:
                     src = (selected.row, selected.col)
                     dst = (row, col)
-
-                    # animate sliding piece
-                    # temporarily remove piece and draw animation
-                    # we will perform move with move_piece and animation shows moving_piece
-                    moving_piece = selected
-                    # perform logical move first (to update captured lists)
                     moved_piece, captured = board_obj.move_piece(src[0], src[1], dst[0], dst[1])
-                    # animate based on previous src and dst, using moving_piece
-                    animate_move(board_obj, moving_piece, src, dst, duration_ms=160)
+                    animate_move(board_obj, moved_piece, src, dst, 200)
+                    move_sound.play()
 
-                    # pawn promotion check
-                    if moved_piece.type == 'pawn':
-                        if (moved_piece.color == WHITE and moved_piece.row == 0) or (moved_piece.color == BLACK and moved_piece.row == ROWS - 1):
+                    # Pawn promotion
+                    if moved_piece.type == "pawn":
+                        if (moved_piece.color == WHITE and moved_piece.row == 0) or \
+                           (moved_piece.color == BLACK and moved_piece.row == ROWS - 1):
                             promote_piece_image(moved_piece)
 
                     selected = None
                     valid_moves = []
                     turn = ai_color
 
-        # AI turn
-        if turn == ai_color:
-            pygame.time.delay(120)
-            # get best move from ai (fast safe ai)
-            move = ai_best_move(board)  # expects (piece, (r,c))
+        # AI move
+        if not game_over and turn == ai_color:
+            pygame.time.delay(300)  # simulate thinking
+            move = ai_best_move(board_obj)
             if move:
-                piece_obj, (r,c) = move
+                piece_obj, (r, c) = move
                 src = (piece_obj.row, piece_obj.col)
                 dst = (r, c)
-                # perform logical move (capture bookkeeping)
                 moved_piece, captured = board_obj.move_piece(src[0], src[1], dst[0], dst[1])
-                # animate move
-                animate_move(board_obj, moved_piece, src, dst, duration_ms=180)
+                animate_move(board_obj, moved_piece, src, dst, 400)
+                move_sound.play()
 
-                # pawn promotion
-                if moved_piece.type == 'pawn':
-                    if (moved_piece.color == WHITE and moved_piece.row == 0) or (moved_piece.color == BLACK and moved_piece.row == ROWS - 1):
+                # Pawn promotion
+                if moved_piece.type == "pawn":
+                    if (moved_piece.color == WHITE and moved_piece.row == 0) or \
+                       (moved_piece.color == BLACK and moved_piece.row == ROWS - 1):
                         promote_piece_image(moved_piece)
 
             turn = human_color
 
-        # draw static frame
-        WIN.fill((0,0,0))
-        board_obj.draw(
-        WIN,
-        highlight=(selected.row, selected.col) if selected else None,
-        highlight_moves=valid_moves,
-        ai_move=last_ai_move if 'last_ai_move' in locals() else None
-)
+        # Check for checkmate
+        if not game_over:
+            if board_obj.is_checkmate(WHITE):
+                game_over = True
+                winner_text = "BLACK WINS!"
+            elif board_obj.is_checkmate(BLACK):
+                game_over = True
+                winner_text = "WHITE WINS!"
 
+        # Draw everything
+        WIN.fill((0, 0, 0))
+        board_obj.draw(WIN,
+            highlight=(selected.row, selected.col) if selected else None,
+            highlight_moves=valid_moves
+        )
 
-        # draw big turn indicator bottom-left
-        turn_text = FONT_BIG.render(f"Turn: {'White (You)' if turn==WHITE else 'Black (AI)'}", True, (240,240,240))
+        # Show turn
+        turn_text = FONT_BIG.render(
+            f"Turn: {'White (You)' if turn == WHITE else 'Black (AI)'}",
+            True, (240, 240, 240)
+        )
         WIN.blit(turn_text, (8, HEIGHT - 40))
 
+        # Show checkmate
+        if game_over:
+            msg = FONT_BIG.render(f"CHECKMATE! {winner_text}", True, (255, 0, 0))
+            WIN.blit(msg, (WIDTH//2 - msg.get_width()//2, HEIGHT//2 - msg.get_height()//2))
+
         pygame.display.update()
+
+
+
 
 if __name__ == "__main__":
     main_menu()
