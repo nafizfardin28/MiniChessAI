@@ -1,54 +1,60 @@
-import random
-from constants import WHITE, BLACK, ROWS, COLS, PIECE_VALUES
+import math
+from constants import *
+from board import Board
 
-def evaluate_board(board):
-    """Simple evaluation: white positive, black negative."""
+MAX_DEPTH = 2
+
+def evaluate(board):
     score = 0
     for row in board:
-        for piece in row:
-            if piece:
-                val = PIECE_VALUES[piece.type]
-                score += val if piece.color == WHITE else -val
+        for p in row:
+            if p:
+                val = PIECE_VALUES[p.type]
+                score += val if p.color == WHITE else -val
     return score
 
-def generate_moves_limited(board, color, limit_per_piece=3):
-    """Generate all valid moves, limit number of moves per piece."""
-    moves = []
-    for row in board:
-        for piece in row:
-            if piece and piece.color == color:
-                valid = piece.get_valid_moves(board)
-                if valid:
-                    # Randomly select a few moves to limit branching
-                    if len(valid) > limit_per_piece:
-                        valid = random.sample(valid, limit_per_piece)
-                    for move in valid:
-                        moves.append((piece, move))
-    return moves
+def minimax(board_obj, depth, alpha, beta, maximizing):
+    if depth == 0:
+        return evaluate(board_obj.board), None
 
-def ai_best_move(board):
-    """Return best move for AI (Black) using depth=1 evaluation."""
-    best_score = float('inf')
+    color = WHITE if maximizing else BLACK
+
+    if board_obj.is_checkmate(color):
+        return (-9999 if maximizing else 9999), None
+
     best_move = None
 
-    moves = generate_moves_limited(board, BLACK)
-    for piece, (r, c) in moves:
-        # simulate move in-place
-        orig_piece = board[r][c]
-        orig_row, orig_col = piece.row, piece.col
-        board[orig_row][orig_col] = None
-        board[r][c] = piece
-        piece.row, piece.col = r, c
+    for r in range(ROWS):
+        for c in range(COLS):
+            p = board_obj.board[r][c]
+            if p and p.color == color:
+                for move in p.get_valid_moves(board_obj.board):
+                    backup = board_obj.board[move[0]][move[1]]
+                    board_obj.board[r][c] = None
+                    board_obj.board[move[0]][move[1]] = p
+                    old = (p.row, p.col)
+                    p.row, p.col = move
 
-        score = evaluate_board(board)
+                    score, _ = minimax(board_obj, depth-1, alpha, beta, not maximizing)
 
-        # revert move
-        piece.row, piece.col = orig_row, orig_col
-        board[orig_row][orig_col] = piece
-        board[r][c] = orig_piece
+                    p.row, p.col = old
+                    board_obj.board[r][c] = p
+                    board_obj.board[move[0]][move[1]] = backup
 
-        if score < best_score:
-            best_score = score
-            best_move = (piece, (r, c))
+                    if maximizing:
+                        if score > alpha:
+                            alpha = score
+                            best_move = (p, move)
+                    else:
+                        if score < beta:
+                            beta = score
+                            best_move = (p, move)
 
-    return best_move
+                    if beta <= alpha:
+                        return (alpha if maximizing else beta), best_move
+
+    return (alpha if maximizing else beta), best_move
+
+def ai_best_move(board_obj):
+    _, move = minimax(board_obj, MAX_DEPTH, -math.inf, math.inf, False)
+    return move
